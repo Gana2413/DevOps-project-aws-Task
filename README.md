@@ -31,7 +31,7 @@ The application is publicly accessible through a Kubernetes LoadBalancer service
 ## Architecture
 
                          +-----------------+
-                         |   Developer     |
+                         |   DevOps        |
                          +-----------------+
                                  |
                                  v
