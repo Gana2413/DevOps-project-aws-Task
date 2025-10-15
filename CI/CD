@@ -1,0 +1,145 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'ap-south-1'
+        ECR_REPO = '630888660601.dkr.ecr.ap-south-1.amazonaws.com/project-task-18'
+        IMAGE_NAME = 'project-task-18'
+        CLUSTER_NAME = 'devops-eks-task'
+        DEPLOYMENT_NAME = 'stuff-app'
+        CONTAINER_NAME = 'testing-k8s'
+    }
+
+    stages {
+        // 🧹 Clean workspace
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        // 🧾 Checkout code
+        stage('Checkout Branch') {
+            steps {
+                git branch: 'main', url: 'https://github.com/AWS-zibi/DevOps-project-aws-Task.git'
+            }
+         }
+
+        // 🏷️ Set Image Tag
+        stage('Set Image Tag') {
+            steps {
+                script {
+                    GIT_SHORT_HASH = sh(script: "git rev-parse --short=6 HEAD", returnStdout: true).trim()
+                    IMAGE_TAG = "${GIT_SHORT_HASH}"
+                    echo "Using image tag: ${IMAGE_TAG}"
+                }
+            }
+        }
+
+        // 🐳 Build Docker Image
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo "Building Docker image..."
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                }
+            }
+        }
+
+        // 🔒 Security Scan with Trivy
+        stage('Security Scan - Trivy') {
+            steps {
+                script {
+                    echo "Scanning Docker image for vulnerabilities using Trivy..."
+
+                    // install Trivy if not already installed
+                    sh '''
+                    if ! command -v trivy &> /dev/null
+                    then
+                        echo "Trivy not found, installing..."
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+                        sudo mv trivy /usr/local/bin/
+                    fi
+                    '''
+
+                    // run Trivy scan
+                    sh '''
+                    trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed \
+                    --no-progress -f table -o trivy-report.txt ${IMAGE_NAME}:${IMAGE_TAG} || true
+                    '''
+
+                    echo "Trivy scan completed. Report saved to trivy-report.txt"
+                }
+            }
+
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-report.txt', onlyIfSuccessful: false
+                }
+                unsuccessful {
+                    echo "⚠️ Security vulnerabilities detected! Please review trivy-report.txt"
+                }
+            }
+        }
+
+        // 🏷️ Tag Docker Image for ECR
+        stage('Tag Docker Image for ECR') {
+            steps {
+                script {
+                    sh "docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}"
+                }
+            }
+        }
+
+        // 🔑 Login to ECR
+        stage('Login to AWS ECR') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-assec-secret-ket']]) {
+                    script {
+                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO}"
+                    }
+                }
+            }
+        }
+
+        // 🚀 Push Image to ECR
+        stage('Push Docker Image to ECR') {
+            steps {
+                script {
+                    sh "docker push ${ECR_REPO}:${IMAGE_TAG}"
+                }
+            }
+        }
+
+        // ☸️ Deploy to EKS
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-assec-secret-ket']]) {
+                    script {
+                        echo "Updating kubeconfig for EKS..."
+                        sh "aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}"
+
+                        echo "Deploying new image to EKS..."
+                        sh """
+                            kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=${ECR_REPO}:${IMAGE_TAG} -n k8s
+                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n k8s
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Docker image pushed & deployed successfully! Image tag: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Pipeline failed. Check logs and Trivy report."
+        }
+        always {
+            echo "🧹 Cleaning workspace..."
+            cleanWs()
+        }
+    }
+}
