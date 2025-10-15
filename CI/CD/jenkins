@@ -25,7 +25,7 @@ pipeline {
             }
          }
 
-        // 🏷️ Set Image Tag
+        // ��️ Set Image Tag
         stage('Set Image Tag') {
             steps {
                 script {

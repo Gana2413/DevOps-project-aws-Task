@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stuff-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stuff-app
+  template:
+    metadata:
+      labels:
+        app: stuff-app
+    spec:
+      containers:
+      - name: testing-k8s
+        image: 630888660601.dkr.ecr.ap-south-1.amazonaws.com/project-task-18:latest
+        ports:
+        - containerPort: 3000
